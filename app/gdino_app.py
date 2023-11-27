@@ -3,12 +3,44 @@ import openvino as ov
 import numpy as np
 import supervision as sv
 import argparse
-from typing import Dict, List
+from typing import Dict, List, Union
 from PIL import Image
-from transformers import AutoTokenizer
+from tokenizers import Tokenizer
 
 import warnings
 warnings.filterwarnings("ignore")
+
+
+class QuickTokenizer:
+    def __init__(self, tokenizer_file):
+        self._tokenizer = Tokenizer.from_file(tokenizer_file)
+        self._unk_token = "[UNK]"
+        self.unk_token_id = self._tokenizer.token_to_id(self._unk_token)
+    def __call__(self, text_prompt: Union[str, List[str]], return_tensors=None) -> Union[Dict, List[Dict]]:
+        if text_prompt is None:
+            return None
+        if isinstance(text_prompt, str):
+            return self.encode(text_prompt, return_tensors=return_tensors)
+        return [self.encode(text_prompt) for token in tokens]
+    def decode(self, ids: List[int]) -> str:
+        return self._tokenizer.decode(ids)
+    def encode(self, text_prompt: str, return_tensors=None) -> Dict:
+        encoded = self._tokenizer.encode(text_prompt)
+        if encoded is None:
+            return self.unk_token_id
+        res = {}
+        if return_tensors == 'np':
+            res["input_ids"] = np.asarray([encoded.ids])
+            res["attention_mask"] = np.asarray([encoded.attention_mask])
+            res["token_type_ids"] = np.asarray([encoded.type_ids])
+        else:
+            res["input_ids"] = encoded.ids
+            res["attention_mask"] = encoded.attention_mask
+            res["token_type_ids"] = encoded.type_ids
+        return res
+    def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
+        return [self._tokenizer.token_to_id(t) for t in tokens]
+
 
 def normalize(arr, mean=(0,0,0), std=(1,1,1)):
     arr = arr.astype(np.float32)
@@ -27,7 +59,7 @@ def load_model(model_checkpoint_path='./models/groundingdino_512.xml', device='G
     core = ov.Core()
     model_read = core.read_model(model_checkpoint_path)
     model = core.compile_model(model_read, device.upper())
-    model.tokenizer = AutoTokenizer.from_pretrained('./models/tokenizer_pretrained_pytorch')
+    model.tokenizer = QuickTokenizer('./models/tokenizer_pretrained_pytorch/tokenizer.json')
     model.max_text_len = 256
     return model
 
@@ -68,7 +100,7 @@ def generate_masks(tokenized, special_tokens_list):
 def get_phrases_from_posmap(
             posmap: np.ndarray,
             tokenized: Dict,
-            tokenizer: AutoTokenizer,
+            tokenizer: QuickTokenizer,
             left_idx: int = 0, right_idx: int = 255):
     if posmap.ndim == 1:
         posmap[0: left_idx + 1] = False
@@ -88,7 +120,7 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold):
     if not caption.endswith("."):
         caption = caption + "."
 
-    tokenized = model.tokenizer(caption, padding="longest", return_tensors="np")
+    tokenized = model.tokenizer(caption, return_tensors="np")
     specical_tokens = model.tokenizer.convert_tokens_to_ids(["[CLS]", "[SEP]", ".", "?"])
     
     text_self_attention_masks, position_ids = generate_masks(tokenized, specical_tokens)
@@ -132,10 +164,10 @@ def box_cxcywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
     (cx, cy) refers to center of bounding box
     (w, h) are width and height of bounding box
     Args:
-        boxes (Tensor[N, 4]): boxes in (cx, cy, w, h) format which will be converted.
+        boxes (np.ndarray[N, 4]): boxes in (cx, cy, w, h) format which will be converted.
 
     Returns:
-        boxes (Tensor(N, 4)): boxes in (x1, y1, x2, y2) format.
+        boxes (np.ndarray(N, 4)): boxes in (x1, y1, x2, y2) format.
     """
     cx, cy, w, h = np.transpose(boxes)
     x1 = cx - 0.5 * w
