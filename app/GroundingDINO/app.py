@@ -3,7 +3,7 @@ import openvino as ov
 import numpy as np
 import supervision as sv
 import argparse
-from typing import Dict, List, Union
+from typing import Dict, List
 from PIL import Image
 from tokenizers import Tokenizer
 
@@ -14,16 +14,9 @@ warnings.filterwarnings("ignore")
 class QuickTokenizer:
     def __init__(self, tokenizer_file):
         self._tokenizer = Tokenizer.from_file(tokenizer_file)
-        self._unk_token = "[UNK]"
-        self.unk_token_id = self._tokenizer.token_to_id(self._unk_token)
-    def __call__(self, text_prompt: Union[str, List[str]], return_tensors=None) -> Union[Dict, List[Dict]]:
-        if text_prompt is None:
-            return None
-        if isinstance(text_prompt, str):
-            return self.encode(text_prompt, return_tensors=return_tensors)
-        return [self.encode(text_prompt) for token in tokens]
-    def decode(self, ids: List[int]) -> str:
-        return self._tokenizer.decode(ids)
+        self.unk_token_id = self._tokenizer.token_to_id('[UNK]')
+    def __call__(self, text_prompt: str, return_tensors=None) -> Dict:
+        return self.encode(text_prompt, return_tensors=return_tensors)
     def encode(self, text_prompt: str, return_tensors=None) -> Dict:
         encoded = self._tokenizer.encode(text_prompt)
         if encoded is None:
@@ -38,6 +31,8 @@ class QuickTokenizer:
             res["attention_mask"] = encoded.attention_mask
             res["token_type_ids"] = encoded.type_ids
         return res
+    def decode(self, ids: List[int]) -> str:
+        return self._tokenizer.decode(ids)
     def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
         return [self._tokenizer.token_to_id(t) for t in tokens]
 
@@ -55,11 +50,11 @@ def preprocess_image(input_image, shape=[512,512]):
     img = normalize(img, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     return img.transpose(2,0,1)
 
-def load_model(model_checkpoint_path='./models/groundingdino_512.xml', device='GPU'):
+def load_dino_model(model_checkpoint_path='./models/groundingdino_512.xml', device='GPU'):
     core = ov.Core()
     model_read = core.read_model(model_checkpoint_path)
     model = core.compile_model(model_read, device.upper())
-    model.tokenizer = QuickTokenizer('./models/tokenizer_pretrained_pytorch/tokenizer.json')
+    model.tokenizer = QuickTokenizer('./models/tokenizer.json')
     model.max_text_len = 256
     return model
 
@@ -196,12 +191,12 @@ def annotate(image_source: np.ndarray, boxes: np.ndarray, logits: np.ndarray, ph
 
 def run_grounding(input_image, grounding_caption, box_threshold, text_threshold):
     image = preprocess_image(input_image)
-    boxes, logits, phrases = get_grounding_output(model, image, grounding_caption, box_threshold, text_threshold)
+    boxes, logits, phrases = get_grounding_output(model_dino, image, grounding_caption, box_threshold, text_threshold)
     annotated_frame = annotate(image_source=np.asarray(input_image), boxes=boxes, logits=logits, phrases=phrases)
     image_with_box = Image.fromarray(annotated_frame)
     return image_with_box
 
-model = load_model(device='GPU')
+model_dino = load_dino_model(device='CPU')
 
 if __name__ == "__main__":
 
@@ -213,8 +208,7 @@ if __name__ == "__main__":
 
     block = gr.Blocks().queue()
     with block:
-        gr.Markdown("# [Grounding DINO](https://github.com/IDEA-Research/GroundingDINO)")
-        gr.Markdown("### Open-World Detection with Grounding DINO")
+        gr.Markdown("# [Grounding DINO](https://github.com/IDEA-Research/GroundingDINO) with [OpenVINO](https://docs.openvino.ai/2023.2/home.html)")
         with gr.Row():
             with gr.Column():
                 input_image = gr.Image(label="Image", sources="upload", type="pil")
