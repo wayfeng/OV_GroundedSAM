@@ -50,7 +50,7 @@ def preprocess_image(input_image, shape=[512,512]):
     img = normalize(img, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     return img.transpose(2,0,1)
 
-def load_dino_model(model_checkpoint_path='./models/groundingdino_512.xml', device='GPU'):
+def load_dino_model(model_checkpoint_path='./models/groundingdino_512_fp16.xml', device='GPU'):
     core = ov.Core()
     model_read = core.read_model(model_checkpoint_path)
     model = core.compile_model(model_read, device.upper())
@@ -59,24 +59,13 @@ def load_dino_model(model_checkpoint_path='./models/groundingdino_512.xml', devi
     return model
 
 def generate_masks(tokenized, special_tokens_list):
-    """Generate attention mask between each pair of special tokens
-    Args:
-        input_ids (np.ndarray): input ids. Shape: [bs, num_token]
-        special_tokens_mask (list): special tokens mask.
-    Returns:
-        np.ndarray: attention mask between each special tokens.
-    """
     input_ids = tokenized["input_ids"]
     bs, num_token = input_ids.shape
-    # special_tokens_mask: bs, num_token. 1 for special tokens. 0 for normal tokens
     special_tokens_mask = np.zeros((bs, num_token)).astype(np.bool_)
     for special_token in special_tokens_list:
         special_tokens_mask |= input_ids == special_token
 
-    # idxs: each row is a list of indices of special tokens
     idxs = np.transpose(np.nonzero(special_tokens_mask))
-
-    # generate attention mask and positional ids
     attention_mask = np.repeat(np.eye(num_token).astype(np.bool_)[None], bs, axis=0)
     position_ids = np.zeros((bs, num_token), dtype=np.int64)
     previous_col = 0
@@ -106,7 +95,7 @@ def get_phrases_from_posmap(
     else:
         raise NotImplementedError("posmap must be 1-dim")
 
-# warning of np.exp(-x) overflow can be ignored
+# warnings of np.exp(-x) overflow are ignored
 def sigmoid(x):
     return 1/(1 + np.exp(-x))
 
@@ -142,28 +131,16 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold):
     prediction_logits_ = sigmoid(np.squeeze(outputs["logits"], 0)) # prediction_logits.shape = (nq, 256)
     prediction_boxes_ = np.squeeze(outputs["boxes"], 0) # prediction_boxes.shape = (nq, 4)
 
-    # filter output
     mask = prediction_logits_.max(axis=1) > box_threshold
     logits = prediction_logits_[mask]  # num_filt, 256
     boxes = prediction_boxes_[mask]  # num_filt, 4
 
-    # get phrase
     tokenized = model.tokenizer(caption)
     phrases = [get_phrases_from_posmap(logit > text_threshold, tokenized, model.tokenizer) for logit in logits]
 
     return boxes, logits.max(axis=1), phrases
 
 def box_cxcywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
-    """
-    Converts bounding boxes from (cx, cy, w, h) format to (x1, y1, x2, y2) format.
-    (cx, cy) refers to center of bounding box
-    (w, h) are width and height of bounding box
-    Args:
-        boxes (np.ndarray[N, 4]): boxes in (cx, cy, w, h) format which will be converted.
-
-    Returns:
-        boxes (np.ndarray(N, 4)): boxes in (x1, y1, x2, y2) format.
-    """
     cx, cy, w, h = np.transpose(boxes)
     x1 = cx - 0.5 * w
     y1 = cy - 0.5 * h
@@ -189,22 +166,24 @@ def annotate(image_source: np.ndarray, boxes: np.ndarray, logits: np.ndarray, ph
     annotated_frame = box_annotator.annotate(scene=image_source, detections=detections, labels=labels)
     return annotated_frame
 
-def run_grounding(input_image, grounding_caption, box_threshold, text_threshold):
+def run_grounding(input_image, grounding_caption, box_threshold, text_threshold, device='CPU'):
     image = preprocess_image(input_image)
-    boxes, logits, phrases = get_grounding_output(model_dino, image, grounding_caption, box_threshold, text_threshold)
+    boxes, logits, phrases = get_grounding_output(models_dino[device], image, grounding_caption, box_threshold, text_threshold)
     annotated_frame = annotate(image_source=np.asarray(input_image), boxes=boxes, logits=logits, phrases=phrases)
     image_with_box = Image.fromarray(annotated_frame)
     return image_with_box
 
-model_dino = load_dino_model(device='CPU')
+core = ov.Core()
+models_dino = {}
+for device in core.available_devices:
+    models_dino[device] = load_dino_model(device=device)
+
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser("Grounding DINO demo", add_help=True)
     parser.add_argument("--debug", action="store_true", help="using debug mode")
     parser.add_argument("--share", action="store_true", help="share the app")
     args = parser.parse_args()
-
 
     block = gr.Blocks().queue()
     with block:
@@ -223,8 +202,11 @@ if __name__ == "__main__":
                     )
             with gr.Column():
                 gallery = gr.Image(type="pil")
+                device = gr.Dropdown(core.available_devices,
+                                     label="Inference Device",
+                                     info="Choose a device to do the inference.")
         run_button.click(
             fn=run_grounding,
-            inputs=[input_image, grounding_caption, box_threshold, text_threshold],
+            inputs=[input_image, grounding_caption, box_threshold, text_threshold, device],
             outputs=[gallery])
-    block.launch(server_name='0.0.0.0', server_port=7579, debug=args.debug, share=args.share)
+        block.launch(server_name='0.0.0.0', server_port=7579, debug=args.debug, share=args.share)
