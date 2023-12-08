@@ -1,0 +1,5 @@
+gradio==4.4.1
+openvino==2023.2.0
+scikit-image==0.22.0
+supervision==0.16.0
+tokenizers==0.15.0
