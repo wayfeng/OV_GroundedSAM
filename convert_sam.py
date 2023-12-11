@@ -9,22 +9,17 @@ ckpts = {'vit_b': './checkpoints/sam_vit_b_01ec64.pth',
 
 from typing import Tuple
 
-class SamONNXModel(torch.nn.Module):
+class SamPredictModel(torch.nn.Module):
     def __init__(
         self,
         model,
-        return_single_mask: bool,
-        use_stability_score: bool = False,
-        return_extra_metrics: bool = False,
+        return_single_mask: bool
     ) -> None:
         super().__init__()
         self.mask_decoder = model.mask_decoder
         self.model = model
         self.img_size = model.image_encoder.img_size
         self.return_single_mask = return_single_mask
-        self.use_stability_score = use_stability_score
-        self.stability_score_offset = 1.0
-        self.return_extra_metrics = return_extra_metrics
 
     def _embed_points(self, point_coords: torch.Tensor, point_labels: torch.Tensor) -> torch.Tensor:
         point_coords = point_coords + 0.5
@@ -95,37 +90,30 @@ class SamONNXModel(torch.nn.Module):
             dense_prompt_embeddings=dense_embedding,
         )
 
-        if self.use_stability_score:
-            scores = calculate_stability_score(
-                masks, self.model.mask_threshold, self.stability_score_offset
-            )
-
         if self.return_single_mask:
             masks, scores = self.select_masks(masks, scores, point_coords.shape[1])
-
-        upscaled_masks = self.mask_postprocessing(masks)
-
-        if self.return_extra_metrics:
-            stability_scores = calculate_stability_score(
-                upscaled_masks, self.model.mask_threshold, self.stability_score_offset
-            )
-            areas = (upscaled_masks > self.model.mask_threshold).sum(-1).sum(-1)
-            return upscaled_masks, scores, stability_scores, areas, masks
-
+        upscaled_masks = masks #self.mask_postprocessing(masks)
         return upscaled_masks, scores
 
-import sys
-import warnings
 
+import warnings
 warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
 
+import argparse
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('model_type')
+    parser.add_argument('-o', '--output_path', default='/tmp/sam')
+
+    args = parser.parse_args()
+
     core = ov.Core()
-    model_type = sys.argv[1]
+    model_type = args.model_type.lower()
     if model_type not in ckpts:
         print(f"Available model types are {[k for k in ckpts.keys()]}")
         exit(0)
-    model_path = sys.argv[2] if len(sys.argv) > 2 else "/tmp/sam"
+    model_path = args.output_path
 
     ov_encoder_path = Path(f"{model_path}/sam_image_encoder_{model_type}.xml")
     ov_model_path = Path(f"{model_path}/sam_mask_predictor_{model_type}.xml")
@@ -135,10 +123,10 @@ if __name__ == '__main__':
 
     sam = sam_model_registry[model_type](checkpoint=ckpts[model_type])
     # convert encoder
-    ov_encoder = ov.convert_model(sam.image_encoder, example_input=torch.randn(1,3,1024,1024))
+    ov_encoder = ov.convert_model(sam.image_encoder, example_input=torch.randn(1,3,1024,1024), input=(1,3,1024,1024))
     ov.save_model(ov_encoder, str(ov_encoder_path), compress_to_fp16=True)
     # convert predictor
-    onnx_model = SamONNXModel(sam, return_single_mask=True)
+    pred_model = SamPredictModel(sam, return_single_mask=True)
     embed_dim = sam.prompt_encoder.embed_dim
     embed_size = sam.prompt_encoder.image_embedding_size
     dummy_inputs = {
@@ -146,7 +134,7 @@ if __name__ == '__main__':
         "point_coords": torch.randint(low=0, high=1024, size=(1, 5, 2), dtype=torch.float),
         "point_labels": torch.randint(low=0, high=4, size=(1, 5), dtype=torch.float),
     }
-    predict_model = ov.convert_model(onnx_model, example_input=dummy_inputs)
+    predict_model = ov.convert_model(pred_model, example_input=dummy_inputs, input=([1,256,64,64],[1,5,2],[1,5]))
     ov.save_model(predict_model, str(ov_model_path), compress_to_fp16=True)
 
     print(f"{ov_encoder_path} and {ov_model_path} created.")
