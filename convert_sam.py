@@ -131,10 +131,10 @@ if __name__ == '__main__':
     embed_size = sam.prompt_encoder.image_embedding_size
     dummy_inputs = {
         "image_embeddings": torch.randn(1, embed_dim, *embed_size, dtype=torch.float),
-        "point_coords": torch.randint(low=0, high=1024, size=(1, 5, 2), dtype=torch.float),
-        "point_labels": torch.randint(low=0, high=4, size=(1, 5), dtype=torch.float),
+        "point_coords": torch.randint(low=0, high=1024, size=(1, 2, 2), dtype=torch.float),
+        "point_labels": torch.randint(low=0, high=4, size=(1, 2), dtype=torch.float),
     }
-    predict_model = ov.convert_model(pred_model, example_input=dummy_inputs, input=([1,256,64,64],[1,5,2],[1,5]))
+    predict_model = ov.convert_model(pred_model, example_input=dummy_inputs)
     ov.save_model(predict_model, str(ov_model_path), compress_to_fp16=True)
 
     print(f"{ov_encoder_path} and {ov_model_path} created.")
