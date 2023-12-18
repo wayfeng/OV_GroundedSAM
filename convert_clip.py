@@ -52,7 +52,7 @@ if __name__ == '__main__':
         # convert text transformer
         t = TextTransformer(model)
         token_input = {"text": torch.randint(low=0, high=49407, size=(10,77))}
-        openclip_text_encoder = ov.convert_model(t, example_input=token_input, input=(10,77))
+        openclip_text_encoder = ov.convert_model(t, example_input=token_input)#, input=(10,77))
         ov.save_model(openclip_text_encoder, f"{args.output_path}/{model_id.lower().replace('-','_')}_text.xml")
     else:
         dummy_inputs = {
