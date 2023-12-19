@@ -1,3 +1,6 @@
+import argparse
+import warnings
+from typing import Tuple
 from segment_anything import sam_model_registry
 import torch
 from pathlib import Path
@@ -7,7 +10,6 @@ ckpts = {'vit_b': './checkpoints/sam_vit_b_01ec64.pth',
          'vit_l': './checkpoints/sam_vit_l_0b3195.pth',
          'vit_h': './checkpoints/sam_vit_h_4b8939.pth'}
 
-from typing import Tuple
 
 class SamPredictModel(torch.nn.Module):
     def __init__(
@@ -24,7 +26,8 @@ class SamPredictModel(torch.nn.Module):
     def _embed_points(self, point_coords: torch.Tensor, point_labels: torch.Tensor) -> torch.Tensor:
         point_coords = point_coords + 0.5
         point_coords = point_coords / self.img_size
-        point_embedding = self.model.prompt_encoder.pe_layer._pe_encoding(point_coords)
+        point_embedding = self.model.prompt_encoder.pe_layer._pe_encoding(
+            point_coords)
         point_labels = point_labels.unsqueeze(-1).expand_as(point_embedding)
 
         point_embedding = point_embedding * (point_labels != -1)
@@ -62,8 +65,10 @@ class SamPredictModel(torch.nn.Module):
         ).to(iou_preds.device)
         score = iou_preds + (num_points - 2.5) * score_reweight
         best_idx = torch.argmax(score, dim=1)
-        masks = masks[torch.arange(masks.shape[0]), best_idx, :, :].unsqueeze(1)
-        iou_preds = iou_preds[torch.arange(masks.shape[0]), best_idx].unsqueeze(1)
+        masks = masks[torch.arange(masks.shape[0]),
+                      best_idx, :, :].unsqueeze(1)
+        iou_preds = iou_preds[torch.arange(
+            masks.shape[0]), best_idx].unsqueeze(1)
 
         return masks, iou_preds
 
@@ -91,15 +96,14 @@ class SamPredictModel(torch.nn.Module):
         )
 
         if self.return_single_mask:
-            masks, scores = self.select_masks(masks, scores, point_coords.shape[1])
-        upscaled_masks = masks #self.mask_postprocessing(masks)
+            masks, scores = self.select_masks(
+                masks, scores, point_coords.shape[1])
+        upscaled_masks = masks  # self.mask_postprocessing(masks)
         return upscaled_masks, scores
 
 
-import warnings
 warnings.filterwarnings("ignore", category=torch.jit.TracerWarning)
 
-import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -123,7 +127,8 @@ if __name__ == '__main__':
 
     sam = sam_model_registry[model_type](checkpoint=ckpts[model_type])
     # convert encoder
-    ov_encoder = ov.convert_model(sam.image_encoder, example_input=torch.randn(1,3,1024,1024), input=(1,3,1024,1024))
+    ov_encoder = ov.convert_model(sam.image_encoder, example_input=torch.randn(
+        1, 3, 1024, 1024), input=(1, 3, 1024, 1024))
     ov.save_model(ov_encoder, str(ov_encoder_path), compress_to_fp16=True)
     # convert predictor
     pred_model = SamPredictModel(sam, return_single_mask=True)
@@ -134,7 +139,8 @@ if __name__ == '__main__':
         "point_coords": torch.randint(low=0, high=1024, size=(1, 2, 2), dtype=torch.float),
         "point_labels": torch.randint(low=0, high=4, size=(1, 2), dtype=torch.float),
     }
-    predict_model = ov.convert_model(pred_model, example_input=dummy_inputs)
+    predict_model = ov.convert_model(
+        pred_model, example_input=dummy_inputs, input=([(1, -1, 2), (1, -1)]))
     ov.save_model(predict_model, str(ov_model_path), compress_to_fp16=True)
 
     print(f"{ov_encoder_path} and {ov_model_path} created.")

@@ -65,7 +65,7 @@ if __name__ == '__main__':
                       f"{args.output_path}/{model_id.lower().replace('-','_')}_visual.xml")
         # convert text transformer
         t = TextTransformer(model)
-        token_input = {"text": torch.randint(low=0, high=49407, size=(-1, 77))}
+        token_input = {"text": torch.randint(low=0, high=49407, size=(1, 77))}
         # openclip_text_encoder = ov.convert_model(t, example_input=token_input, input=(10,77))
         openclip_text_encoder = ov.convert_model(
             t, example_input=token_input, input=(-1, 77))
