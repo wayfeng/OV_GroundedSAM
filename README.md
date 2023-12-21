@@ -1,6 +1,29 @@
 # OV_GroundedSAM
 Run Grounded SAM with OpenVINO on Intel dGPU.
 
+## To convert models
+
+### GroundingDINO
+Check https://github.com/wenyi5608/GroundingDINO for more details.
+
+### SAM
+```bash
+pip install -e git+https://github.com/facebookresearch/segment-anything.git#egg=segment_anything
+python convert_sam.py vit_l models/sam
+```
+
+### CLIP
+```bash
+pip install -e git+https://github.com/mlfoundations/open_clip.git#egg=open_clip_torch
+python convert_clip.py ViT-L-14 -o models/clip
+```
+
+### ViT
+```bash
+pip install -e git+https://github.com/lukemelas/PyTorch-Pretrained-ViT.git#egg=pytorch_pretrained_vit
+python convert_vit.py L_32 -o models/vit
+```
+
 ## To benchmark models
 
 ### GroundingDINO
